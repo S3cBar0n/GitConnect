@@ -52,12 +52,11 @@ class Gitconnect(commands.Cog):
 
     @commands.command(aliases=["connect", "add"])
     async def link(self, ctx, git_user):
-        # Getting token from environment for the Github API
         server_name = str(ctx.guild)
         server_id = ctx.guild.id
 
         SQL.execute(f'create table if not exists "{server_name}"('
-                    '"Server_ID" integer secon, '
+                    '"Server_ID" integer, '
                     '"Server_Name" text, '
                     '"Username" text not null primary key'
                     ')')
@@ -104,8 +103,8 @@ class Gitconnect(commands.Cog):
         DB.commit()
         await ctx.send(f"The user **{git_user}** has been successfully been removed from the watch list.")
 
-    @commands.command(aliases=["list"])
-    async def watchlist(self, ctx):
+    @commands.command(aliases=["watchlist"])
+    async def list(self, ctx):
         server_name = str(ctx.guild)
         server_id = ctx.guild.id
         SQL.execute(
@@ -121,8 +120,93 @@ class Gitconnect(commands.Cog):
             watch_list.append(entry)
             watch_list = sorted(watch_list, key=str.casefold)
 
-        embed = discord.Embed(title=f"{server_name}'s Github Watchlist", color=discord.Colour.blue())
+        embed = discord.Embed(title=f"{server_name}'s Github User Watchlist", color=discord.Colour.blue())
         embed.add_field(name="**__Github Users__**", value=f"\n".join(watch_list), inline=True)
+        embed.set_footer(icon_url=ctx.author.avatar_url, text=f"Requested by {ctx.author.name}")
+        await ctx.send(embed=embed)
+
+    @commands.command(aliases=["repoconnect", "repoadd"])
+    async def repolink(self, ctx, repo_link):
+        server_name = str(ctx.guild)
+        server_id = ctx.guild.id
+
+        SQL.execute(f'create table if not exists "Repo_{server_name}"('
+                    '"Server_ID" integer, '
+                    '"Server_Name" text, '
+                    '"Repo" text not null primary key'
+                    ')')
+
+        if "://github.com/" in repo_link:
+            repo_link = repo_link.split("/", 3)[3]
+        else:
+            print("Unable to add repo...")
+
+        # This tests to see if the user already exists on the table, if they do it fails and sends a failure message
+        try:
+            SQL.execute(f'insert into "Repo_{server_name}"(Server_ID, Server_Name, Repo) values(?, ?, ?)',
+                        (server_id, server_name, repo_link))
+        except Exception as e:
+            print(e)
+            await ctx.send(
+                f"The Repo **{repo_link}** has already been added to the watch list for this server...")
+            return
+
+        # Commits changes to the DB if the user does not already exist
+        DB.commit()
+        await ctx.send(f"The Repo **{repo_link}** has been successfully added to our watch list, Github activity "
+                       f"will be monitored starting after the next sync.")
+
+    @commands.command(aliases=["reporemove", "repodisconnect", "repodel"])
+    async def repounlink(self, ctx, repo_link):
+        server_name = str(ctx.guild)
+        server_id = ctx.guild.id
+
+        if "://github.com/" in repo_link:
+            repo_link = repo_link.split("/", 3)[3]
+        else:
+            print("Unable to add repo...")
+
+        # We are searching the DB for an occurrence of the user that needs to be removed, if they exist it continues
+        # if they do not exists it stops and returns that the user is not on the DB.
+        SQL_Search = SQL.execute(
+            f'select rowid from "Repo_{server_name}" where Server_ID = "{server_id}" and Server_Name = "{server_name}" and Repo = "{repo_link}"')
+        if SQL_Search.fetchone() is not None:
+            try:
+                SQL.execute(
+                    f'delete from "Repo_{server_name}" where Server_ID = "{server_id}" and Server_Name = "{server_name}" and Repo = "{repo_link}"')
+            except Exception as e:
+                print(e)
+                await ctx.send(
+                    f"The repo **{repo_link}** does not exist on the watch list...")
+                return
+        else:
+            await ctx.send(
+                f"The repo **{repo_link}** does not exist on the watch list...")
+            return
+
+        # If the user does exist, it commits the deletion to the DB.
+        DB.commit()
+        await ctx.send(f"The repo **{repo_link}** has been successfully been removed from the watch list.")
+
+    @commands.command(aliases=["repowatchlist", "rlist"])
+    async def repolist(self, ctx):
+        server_name = str(ctx.guild)
+        server_id = ctx.guild.id
+        SQL.execute(
+            f'select Repo from "Repo_{server_name}" where Server_ID = "{server_id}" and Server_Name = "{server_name}"')
+        remove_items = ["'", "(", ")", ","]
+        watch_list = []
+
+        # Sorts through our SQL data to remove unneeded items based off of the remove_items list.
+        for entry in SQL.fetchall():
+            for item in remove_items:
+                entry = str(entry)
+                entry = entry.replace(item, "")
+            watch_list.append(entry)
+            watch_list = sorted(watch_list, key=str.casefold)
+
+        embed = discord.Embed(title=f"{server_name}'s Github Repo Watchlist", color=discord.Colour.blue())
+        embed.add_field(name="**__Github Repositories__**", value=f"\n".join(watch_list), inline=True)
         embed.set_footer(icon_url=ctx.author.avatar_url, text=f"Requested by {ctx.author.name}")
         await ctx.send(embed=embed)
 
