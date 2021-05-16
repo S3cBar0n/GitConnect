@@ -15,8 +15,9 @@ class Events(commands.Cog):
 
     # When a known command fails, throws error
     @commands.Cog.listener()
-    async def on_command_error(self, ctx, error):
-        await ctx.send(ctx.command.name + " didn't work! Give it another try.")
+    async def on_command_error(self, ctx: commands.Context, error: commands.CommandError):
+        await ctx.send(f"{ctx.command.name} didn't work! Give it another try.\n"
+                       f"Error: {error}")
         print(error)
 
     # Event for monitoring command usage
