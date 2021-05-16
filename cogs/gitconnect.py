@@ -16,8 +16,115 @@ class Gitconnect(commands.Cog):
     def __init__(self, client):
         self.client = client  # this allows us to access the client within our cog
 
+    # THIS COMMAND CREATES AN EMBED THAT LISTS A DISCORD MEMBERS NAME AND LISTS IF THEY HAVE A CONNECTED GITHUB ACCOUNT.
+    @commands.command(aliases=["user", "info"])
+    async def whois(self, ctx, member: discord.Member):
+        """Lists information about a specific discord user.
+
+        Use this command to see the users Github Username and latest activity.
+        """
+        server_name = str(ctx.guild)
+        server_id = ctx.guild.id
+        token = os.getenv("GITTOKEN")
+        git = Github(token)
+        git_user = "Does not have one set. Use >link to add your account."
+
+        try:
+            SQL.execute(
+                f'select Git_Username from "UserAcc_{server_name}" where Server_ID = "{server_id}" and Server_Name = "{server_name}" and Discord_ID = "{ctx.author.id}"')
+            remove_items = ["'", "(", ")", ","]
+            for entry in SQL.fetchall():
+                for item in remove_items:
+                    entry = str(entry)
+                    entry = entry.replace(item, "")
+                git_username = entry
+                git_user = f"[{git_username}]({git.get_user(git_username).html_url})"
+        except Exception as e:
+            print(e)
+
+        embed = discord.Embed(title=member.name, description=member.mention, color=discord.Colour.red())
+        embed.add_field(name='Github Username', value=git_user, inline=True)
+        embed.set_thumbnail(url=member.avatar_url)
+        embed.set_footer(icon_url=ctx.author.avatar_url, text=f"Requested by {ctx.author.name}")
+        await ctx.send(embed=embed)
+
+    # THIS ADDS A GITHUB ACCOUNT TO THE USER WHO CALLED THE COMMAND
+    @commands.command(aliases=["addgit", "connecthub"])
+    async def link(self, ctx, git_user):
+        """This command attaches a Github Account to your discord account for this server.
+        """
+        # Getting token from environment for the Github API
+        token = os.getenv("GITTOKEN")
+        git = Github(token)
+        server_name = str(ctx.guild)
+        server_id = ctx.guild.id
+
+        # Tests to see if the account is a real account on Github
+        try:
+            user = git.get_user(git_user)
+        except Exception as e:
+            print(e)
+            await ctx.send(f"The github account {git_user} is not a valid Github User, try again...")
+            return
+
+        # Creates our DB to connect user accounts to discord users
+        SQL.execute(f'create table if not exists "UserAcc_{server_name}"('
+                    '"Server_ID" integer, '
+                    '"Server_Name" text, '
+                    '"Git_Username" text,'
+                    '"Discord_ID" text not null primary key'
+                    ')')
+
+        # This tests to see if the user already exists on the table, if they do it fails and sends a failure message
+        try:
+            SQL.execute(
+                f'insert into "UserAcc_{server_name}"(Server_ID, Server_Name, Git_Username, Discord_ID) values(?, ?, ?, ?)',
+                (server_id, server_name, git_user, ctx.author.id))
+        except Exception as e:
+            print(e)
+            await ctx.send(
+                f"There is already an account connected to **{ctx.author.name}**...")
+            return
+
+        # Commits changes to the DB if the user does not already exist
+        DB.commit()
+        await ctx.send(f"The github account **{user.login}** has been attached to **{ctx.author.name}**.")
+
+    # THIS COMMAND REMOVES THE GITHUB ACCOUNT ATTACHED TO WHOEVER CALLED THE COMMAND.
+    @commands.command(aliases=["delgit", "removegit", "disconnecthub"])
+    async def unlink(self, ctx):
+        """This command removes a Github Account from your discord account for this server.
+        """
+        server_name = str(ctx.guild)
+        server_id = ctx.guild.id
+
+        # We are searching the DB for an occurrence of the user that needs to be removed, if they exist it continues
+        # if they do not exists it stops and returns that the user is not on the DB.
+        SQL_Search = SQL.execute(
+            f'select rowid from "UserAcc_{server_name}" where Server_ID = "{server_id}" and Server_Name = "{server_name}" and Discord_ID = "{ctx.author.id}"')
+        if SQL_Search.fetchone() is not None:
+            try:
+                SQL.execute(
+                    f'delete from "UserAcc_{server_name}" where Server_ID = "{server_id}" and Server_Name = "{server_name}" and Discord_ID = "{ctx.author.id}"')
+            except Exception as e:
+                print(e)
+                await ctx.send(
+                    f"The user **{ctx.author.name}** does not have a Github Account attached...")
+                return
+        else:
+            await ctx.send(
+                f"The user **{ctx.author.name}** does not have a Github Account attached...")
+            return
+
+        # If the user does exist, it commits the deletion to the DB.
+        DB.commit()
+        await ctx.send(f"The Github account attached to **{ctx.author.name}** has been removed.")
+
+    # GETS THE LATEST STATUS FOR A REPO, LISTS LATEST COMMIT AND ADDS A CLICKABLE LINK TO THE EMBED
     @commands.command(aliases=["project", "status"])
     async def repo(self, ctx, repo_link):
+        """Pulls information on a Github Repo and provides the lastest commit.
+        """
         # Getting token from environment for the Github API
         token = os.getenv("GITTOKEN")
         git = Github(token)
@@ -50,8 +157,14 @@ class Gitconnect(commands.Cog):
                          text=f"By {commit.author.login} on {commit.commit.committer.date}")
         await ctx.send(embed=embed)
 
-    @commands.command(aliases=["connect", "add"])
-    async def link(self, ctx, git_user):
+    # ADDS A GITHUB USER TO THE WATCH LIST TO ANNOUNCE ANY CHANGES TO REPOS OR NEW PROJECTS THEY CREATE
+    @commands.command(aliases=["watch", "useradd", "userlink"])
+    # @commands.has_permissions(kick_members=True)
+    async def watchuser(self, ctx, git_user):
+        """Adds a user to the watch list.
+
+        Adds a user to the watchlist, this user's latest activity will be announced to the server.
+        """
         server_name = str(ctx.guild)
         server_id = ctx.guild.id
 
@@ -61,7 +174,7 @@ class Gitconnect(commands.Cog):
                     '"Username" text not null primary key'
                     ')')
 
-        # This tests to see if the user already exists on the table, if they do it fails and sends a failure messsage
+        # This tests to see if the user already exists on the table, if they do it fails and sends a failure message
         try:
             SQL.execute(f'insert into "{server_name}"(Server_ID, Server_Name, Username) values(?, ?, ?)',
                         (server_id, server_name, git_user))
@@ -76,8 +189,14 @@ class Gitconnect(commands.Cog):
         await ctx.send(f"The user **{git_user}** has been successfully added to our watch list, their Github activity "
                        f"will be monitored starting after the next sync.")
 
-    @commands.command(aliases=["remove", "disconnect"])
-    async def unlink(self, ctx, git_user):
+    # REMOVES A USER FROM THE WATCH LIST
+    @commands.command(aliases=["delwatch", "stopwatching"])
+    # @commands.has_permissions(kick_members=True)
+    async def unwatchuser(self, ctx, git_user):
+        """Removes a user to the watch list.
+
+        Removes a user from the watchlist, this user's activity will no longer be announced to the server.
+        """
         server_name = str(ctx.guild)
         server_id = ctx.guild.id
 
@@ -103,8 +222,11 @@ class Gitconnect(commands.Cog):
         DB.commit()
         await ctx.send(f"The user **{git_user}** has been successfully been removed from the watch list.")
 
+    # LISTS ALL CURRENT USERS ON THE WATCH LIST
     @commands.command(aliases=["watchlist"])
     async def list(self, ctx):
+        """Lists all members currently on the watch list
+        """
         server_name = str(ctx.guild)
         server_id = ctx.guild.id
         SQL.execute(
@@ -125,8 +247,14 @@ class Gitconnect(commands.Cog):
         embed.set_footer(icon_url=ctx.author.avatar_url, text=f"Requested by {ctx.author.name}")
         await ctx.send(embed=embed)
 
-    @commands.command(aliases=["repoconnect", "repoadd"])
-    async def repolink(self, ctx, repo_link):
+    # ADDS A GITHUB REPO TO THE WATCH LIST TO ANNOUNCE ANY CHANGES TO THE REPO
+    @commands.command(aliases=["repoconnect", "repoadd", "repolink"])
+    # @commands.has_permissions(kick_members=True)
+    async def watchrepo(self, ctx, repo_link):
+        """Adds a repo to the watch list.
+
+        Adds a repo to the watchlist, the latest commits and activity on this repo will be announced to the server.
+        """
         server_name = str(ctx.guild)
         server_id = ctx.guild.id
 
@@ -156,8 +284,14 @@ class Gitconnect(commands.Cog):
         await ctx.send(f"The Repo **{repo_link}** has been successfully added to our watch list, Github activity "
                        f"will be monitored starting after the next sync.")
 
-    @commands.command(aliases=["reporemove", "repodisconnect", "repodel"])
+    # REMOVES THE REPO FROM THE WATCHLIST
+    @commands.command(aliases=["reporemove", "repodisconnect", "repodel", "unwatchrepo"])
+    # @commands.has_permissions(kick_members=True)
     async def repounlink(self, ctx, repo_link):
+        """Removes a repo from the watch list.
+
+        Removes a repo from the watchlist, this repo's activity will no longer be announced to the server.
+        """
         server_name = str(ctx.guild)
         server_id = ctx.guild.id
 
@@ -188,8 +322,11 @@ class Gitconnect(commands.Cog):
         DB.commit()
         await ctx.send(f"The repo **{repo_link}** has been successfully been removed from the watch list.")
 
+    # LISTS ALL REPOS ON THE CURRENT WATCH LIST
     @commands.command(aliases=["repowatchlist", "rlist"])
     async def repolist(self, ctx):
+        """Lists all repos currently on the watch list.
+        """
         server_name = str(ctx.guild)
         server_id = ctx.guild.id
         SQL.execute(
