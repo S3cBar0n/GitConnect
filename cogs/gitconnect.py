@@ -23,12 +23,22 @@ class Gitconnect(commands.Cog):
 
         Use this command to see the users Github Username and latest activity.
         """
+        event_types = {
+            "WatchEvent": "Starred",
+            "ForkEvent": "Forked",
+            "PushEvent": "Pushed to",
+            "CreateEvent": "Created",
+            "PullRequestEvent": "PR submitted to",
+            "IssueCommentEvent": "Commented on",
+            "MemberEvent": "Modified settings for"
+        }
+
         server_name = str(ctx.guild)
         server_id = ctx.guild.id
-        token = os.getenv("GITTOKEN")
-        git = Github(token)
-        git_user = "Does not have one set. Use >link to add your account."
-
+        git = Github()
+        git_username = None
+        git_userlink = None
+        activity = []
         try:
             SQL.execute(
                 f'select Git_Username from "UserAcc_{server_name}" where Server_ID = "{server_id}" and Server_Name = "{server_name}" and Discord_ID = "{ctx.author.id}"')
@@ -38,12 +48,26 @@ class Gitconnect(commands.Cog):
                     entry = str(entry)
                     entry = entry.replace(item, "")
                 git_username = entry
-                git_user = f"[{git_username}]({git.get_user(git_username).html_url})"
+                git_userlink = f"[{git_username}]({git.get_user(git_username).html_url})"
         except Exception as e:
             print(e)
 
+        if git_username is not None:
+            events = git.get_user(git_username).get_public_events()
+            for item in range(3):
+                print(
+                    f"Recent Activity:\n {event_types[events[item].type]} the following repo {events[item].repo.name}")
+                activity.append(f"{events[item].created_at.strftime('%m-%d')} - {event_types[events[item].type]} the repo {events[item].repo.name}")
+        else:
+            events = 0
+
         embed = discord.Embed(title=member.name, description=member.mention, color=discord.Colour.red())
-        embed.add_field(name='Github Username', value=git_user, inline=True)
+        if git_userlink is not None:
+            embed.add_field(name='Github Username', value=git_userlink, inline=False)
+        else:
+            embed.add_field(name='Link Your Github!', value="Use >link to add your account.", inline=False)
+        if len(activity) >= 1:
+            embed.add_field(name='Recent Activity', value=f"\n".join(activity), inline=False)
         embed.set_thumbnail(url=member.avatar_url)
         embed.set_footer(icon_url=ctx.author.avatar_url, text=f"Requested by {ctx.author.name}")
         await ctx.send(embed=embed)
@@ -54,8 +78,7 @@ class Gitconnect(commands.Cog):
         """This command attaches a Github Account to your discord account for this server.
         """
         # Getting token from environment for the Github API
-        token = os.getenv("GITTOKEN")
-        git = Github(token)
+        git = Github()
         server_name = str(ctx.guild)
         server_id = ctx.guild.id
 
@@ -126,8 +149,7 @@ class Gitconnect(commands.Cog):
         """Pulls information on a Github Repo and provides the lastest commit.
         """
         # Getting token from environment for the Github API
-        token = os.getenv("GITTOKEN")
-        git = Github(token)
+        git = Github()
 
         # Checks to see if the repo provided by the user is a link, if its a link it processes it for use with the API.
         if "://github.com/" in repo_link:
@@ -261,7 +283,8 @@ class Gitconnect(commands.Cog):
         SQL.execute(f'create table if not exists "Repo_{server_name}"('
                     '"Server_ID" integer, '
                     '"Server_Name" text, '
-                    '"Repo" text not null primary key'
+                    '"Repo" text not null primary key, '
+                    '"Last_Update" text'
                     ')')
 
         if "://github.com/" in repo_link:
